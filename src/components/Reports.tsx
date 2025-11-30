@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Download, TrendingUp } from 'lucide-react';
+import { Download, TrendingUp, AlertCircle, Lightbulb, Zap } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { generateFinancialReport, calculateFinancialScore, predictFutureSpending } from '../services/aiReportGenerator';
 
 interface CategoryData {
   name: string;
@@ -24,6 +25,14 @@ export function Reports() {
   const [totalExpense, setTotalExpense] = useState(0);
   const [savingsRate, setSavingsRate] = useState(0);
   const [aiInsights, setAiInsights] = useState<string>('');
+  const [financialScore, setFinancialScore] = useState(0);
+  const [recommendations, setRecommendations] = useState<string[]>([]);
+  const [riskFactors, setRiskFactors] = useState<string[]>([]);
+  const [predictedMonth, setPredictedMonth] = useState<{ income: number; expense: number; savings: number }>({
+    income: 0,
+    expense: 0,
+    savings: 0,
+  });
 
   const COLORS = ['#10b981', '#f59e0b', '#ef4444', '#3b82f6', '#8b5cf6', '#ec4899', '#f97316', '#06b6d4'];
 
@@ -116,38 +125,59 @@ export function Reports() {
       }));
 
       setMonthlyTrend(trend);
-      generateAiInsights(income, expense, categoryArray);
+
+      const currentMonth = {
+        income,
+        expense,
+        savings: income - expense,
+        savingsRate: Math.max(0, savingsRate),
+      };
+
+      const previousMonth = trend.length > 1
+        ? {
+            income: monthlyData[monthlyData.length - 2].income,
+            expense: monthlyData[monthlyData.length - 2].expense,
+            savings:
+              monthlyData[monthlyData.length - 2].income -
+              monthlyData[monthlyData.length - 2].expense,
+            savingsRate:
+              monthlyData.length > 1
+                ? ((monthlyData[monthlyData.length - 2].income -
+                    monthlyData[monthlyData.length - 2].expense) /
+                    monthlyData[monthlyData.length - 2].income) *
+                  100
+                : 0,
+          }
+        : currentMonth;
+
+      const report = generateFinancialReport(currentMonth, previousMonth, categorySpending, expense);
+
+      setAiInsights(report.summary);
+      setRecommendations(report.recommendations);
+      setRiskFactors(report.riskFactors);
+
+      const expenseVariance = trend.length > 1
+        ? (expense - monthlyData[monthlyData.length - 2].expense) / monthlyData[monthlyData.length - 2].expense
+        : 0;
+
+      const score = calculateFinancialScore(currentMonth, expenseVariance);
+      setFinancialScore(score);
+
+      const predicted = predictFutureSpending(
+        sortedMonths.map((month) => ({
+          income: monthlyData[month].income,
+          expense: monthlyData[month].expense,
+          savings: monthlyData[month].income - monthlyData[month].expense,
+          savingsRate:
+            (monthlyData[month].income - monthlyData[month].expense) /
+            monthlyData[month].income *
+            100,
+        }))
+      );
+      setPredictedMonth(predicted);
     }
 
     setLoading(false);
-  };
-
-  const generateAiInsights = (income: number, expense: number, categories: CategoryData[]) => {
-    let insights = '';
-
-    if (expense > income) {
-      insights += `⚠️ You're spending ${((expense / income - 1) * 100).toFixed(0)}% more than you earn. Consider reviewing your expenses.\n\n`;
-    } else {
-      insights += `✅ Great job! You're saving ${savingsRate.toFixed(0)}% of your income.\n\n`;
-    }
-
-    if (categories.length > 0) {
-      const topCategory = categories[0];
-      const percentage = (topCategory.value / expense) * 100;
-      insights += `📊 Your top spending category is "${topCategory.name}" at ${percentage.toFixed(0)}% of expenses.\n\n`;
-    }
-
-    if (savingsRate > 30) {
-      insights += '🌟 Excellent savings rate! Keep maintaining this disciplined approach.';
-    } else if (savingsRate > 20) {
-      insights += '💪 Good savings rate. Try to increase it by cutting non-essential expenses.';
-    } else if (savingsRate > 10) {
-      insights += '📈 Consider increasing your savings target for better financial security.';
-    } else {
-      insights += '⚡ Start building an emergency fund by reducing discretionary spending.';
-    }
-
-    setAiInsights(insights);
   };
 
   const formatCurrency = (amount: number) => {
@@ -290,17 +320,95 @@ export function Reports() {
         )}
       </div>
 
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
+          <div className="text-sm text-gray-600 mb-2">Financial Score</div>
+          <div className="flex items-end gap-2">
+            <div className="text-4xl font-bold text-emerald-600">{financialScore}</div>
+            <div className="text-sm text-gray-500 mb-1">/100</div>
+          </div>
+          <div className="mt-3 bg-gray-200 rounded-full h-2 overflow-hidden">
+            <div
+              className="bg-gradient-to-r from-emerald-500 to-blue-500 h-full transition-all"
+              style={{ width: `${financialScore}%` }}
+            />
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
+          <div className="text-sm text-gray-600 mb-2">Predicted Next Month</div>
+          <div className="space-y-2">
+            <div>
+              <div className="text-xs text-gray-500">Income</div>
+              <div className="text-lg font-semibold text-emerald-600">₹{formatCurrency(predictedMonth.income).replace('₹', '')}</div>
+            </div>
+            <div>
+              <div className="text-xs text-gray-500">Expense</div>
+              <div className="text-lg font-semibold text-red-600">₹{formatCurrency(predictedMonth.expense).replace('₹', '')}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
+          <div className="text-sm text-gray-600 mb-2">Projected Savings</div>
+          <div className="text-3xl font-bold text-blue-600">₹{formatCurrency(predictedMonth.savings).replace('₹', '')}</div>
+          <div className="mt-2 text-xs text-gray-500">Based on historical trends</div>
+        </div>
+      </div>
+
       <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-6 border border-blue-200">
         <div className="flex gap-4">
           <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
             <TrendingUp className="text-blue-600" size={24} />
           </div>
           <div className="flex-1">
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">AI Insights</h3>
-            <p className="text-gray-700 whitespace-pre-line text-sm leading-relaxed">{aiInsights}</p>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Financial Summary</h3>
+            <p className="text-gray-700 text-sm leading-relaxed">{aiInsights}</p>
           </div>
         </div>
       </div>
+
+      {recommendations.length > 0 && (
+        <div className="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl p-6 border border-emerald-200">
+          <div className="flex gap-4">
+            <div className="w-12 h-12 bg-emerald-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <Lightbulb className="text-emerald-600" size={24} />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-lg font-semibold text-gray-900 mb-3">Personalized Recommendations</h3>
+              <ul className="space-y-2">
+                {recommendations.map((rec, idx) => (
+                  <li key={idx} className="flex gap-2 text-sm text-gray-700">
+                    <span className="text-emerald-600 font-bold">•</span>
+                    <span>{rec}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {riskFactors.length > 0 && (
+        <div className="bg-gradient-to-br from-red-50 to-orange-50 rounded-xl p-6 border border-red-200">
+          <div className="flex gap-4">
+            <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <AlertCircle className="text-red-600" size={24} />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-lg font-semibold text-gray-900 mb-3">Areas of Concern</h3>
+              <ul className="space-y-2">
+                {riskFactors.map((risk, idx) => (
+                  <li key={idx} className="flex gap-2 text-sm text-gray-700">
+                    <span className="text-red-600 font-bold">⚠</span>
+                    <span>{risk}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

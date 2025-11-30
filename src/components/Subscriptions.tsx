@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, X, AlertCircle, Repeat, Calendar } from 'lucide-react';
+import { Plus, X, AlertCircle, Repeat, Calendar, Trash2, TrendingDown, Lightbulb } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -114,6 +114,54 @@ export function Subscriptions() {
     return sum + (s.amount * multiplier);
   }, 0);
 
+  const handleDeleteSubscription = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this subscription?')) return;
+
+    const { error } = await supabase
+      .from('subscriptions')
+      .update({ is_active: false })
+      .eq('id', id)
+      .eq('user_id', user?.id);
+
+    if (error) {
+      alert('Failed to delete subscription');
+      return;
+    }
+
+    loadSubscriptions();
+  };
+
+  const getSubscriptionRecommendations = () => {
+    const recommendations = [];
+
+    if (yearlySpend > 50000) {
+      recommendations.push(
+        'Your total subscription spend exceeds ₹50,000/year. Review and cancel unused subscriptions.'
+      );
+    }
+
+    const unusedTypes = subscriptions.filter(
+      (s) => getDaysUntilBilling(s.next_billing_date) > 30
+    );
+    if (unusedTypes.length > 0) {
+      recommendations.push(
+        `You have ${unusedTypes.length} subscription(s) with billing date more than 30 days away. These might be unused.`
+      );
+    }
+
+    const expensiveSubscriptions = subscriptions
+      .filter((s) => s.amount > 500)
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 3);
+    if (expensiveSubscriptions.length > 0) {
+      recommendations.push(
+        `Your top 3 expensive subscriptions cost ₹${expensiveSubscriptions.reduce((sum, s) => sum + s.amount, 0)}/billing period. Consider alternatives.`
+      );
+    }
+
+    return recommendations;
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -184,12 +232,21 @@ export function Subscriptions() {
                       <p className="text-sm text-gray-600 mt-1">{sub.description}</p>
                     )}
                   </div>
-                  {isUpcoming && (
-                    <div className="flex items-center gap-2 px-3 py-1 bg-amber-50 border border-amber-200 rounded-lg">
-                      <AlertCircle size={16} className="text-amber-600" />
-                      <span className="text-xs font-semibold text-amber-600">Due Soon</span>
-                    </div>
-                  )}
+                  <div className="flex gap-2">
+                    {isUpcoming && (
+                      <div className="flex items-center gap-2 px-3 py-1 bg-amber-50 border border-amber-200 rounded-lg">
+                        <AlertCircle size={16} className="text-amber-600" />
+                        <span className="text-xs font-semibold text-amber-600">Due Soon</span>
+                      </div>
+                    )}
+                    <button
+                      onClick={() => handleDeleteSubscription(sub.id)}
+                      className="p-2 hover:bg-red-100 rounded-lg transition"
+                      title="Delete subscription"
+                    >
+                      <Trash2 size={18} className="text-red-600" />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -215,6 +272,27 @@ export function Subscriptions() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {getSubscriptionRecommendations().length > 0 && (
+        <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl p-6 border border-amber-200">
+          <div className="flex gap-4">
+            <div className="w-12 h-12 bg-amber-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <Lightbulb className="text-amber-600" size={24} />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-lg font-semibold text-gray-900 mb-3">Subscription Insights</h3>
+              <ul className="space-y-2">
+                {getSubscriptionRecommendations().map((rec, idx) => (
+                  <li key={idx} className="flex gap-2 text-sm text-gray-700">
+                    <span className="text-amber-600 font-bold">•</span>
+                    <span>{rec}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
         </div>
       )}
 
